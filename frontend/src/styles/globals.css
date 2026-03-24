@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer utilities {
+  .kinetic-gradient {
+    background: linear-gradient(135deg, #caff6f 0%, #80af27 100%);
+  }
+  .glass {
+    background: rgba(25, 37, 64, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .glow-primary {
+    box-shadow: 0 0 15px rgba(202, 255, 111, 0.4);
+  }
+  .glow-secondary {
+    box-shadow: 0 0 15px rgba(0, 227, 253, 0.4);
+  }
+  .glow-tertiary {
+    box-shadow: 0 0 15px rgba(166, 140, 255, 0.4);
+  }
+}
+
+/* Light mode overrides — colors from the Kinetic Lab design system */
+html:not(.dark) {
+  --color-surface: #f5f7f9;
+  --color-surface-dim: #d0d5d8;
+  --color-surface-bright: #f5f7f9;
+  --color-surface-container: #e5e9eb;
+  --color-surface-container-low: #eef1f3;
+  --color-surface-container-high: #dfe3e6;
+  --color-surface-container-highest: #d9dde0;
+  --color-surface-container-lowest: #ffffff;
+  --color-background: #f5f7f9;
+  --color-on-surface: #2c2f31;
+  --color-on-surface-variant: #595c5e;
+  --color-on-background: #2c2f31;
+  --color-outline: #747779;
+  --color-outline-variant: #abadaf;
+  --color-primary: #456500;
+  --color-primary-dim: #3c5800;
+  --color-primary-container: #c7fc6d;
+  --color-error: #b02500;
+}
+
+html:not(.dark) body {
+  background-color: #f5f7f9;
+  color: #2c2f31;
+}
+
+html:not(.dark) .glass {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+html:not(.dark) .kinetic-gradient {
+  background: linear-gradient(135deg, #456500 0%, #c7fc6d 100%);
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+}
+
+::-webkit-scrollbar { width: 4px; }
+.dark ::-webkit-scrollbar-track { background: #060e20; }
+.dark ::-webkit-scrollbar-thumb { background: #192540; border-radius: 10px; }
+html:not(.dark) ::-webkit-scrollbar-track { background: #f5f7f9; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: #d0d5d8; border-radius: 10px; }
