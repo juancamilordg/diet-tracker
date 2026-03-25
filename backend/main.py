@@ -73,21 +73,6 @@ app.include_router(users.router)
 async def health():
     return {"status": "ok", "bot_active": bot_app is not None}
 
-# Temporary endpoint to upload database for migration
-from fastapi import UploadFile, File, Header, HTTPException
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
-
-@app.post("/api/admin/upload-db")
-async def upload_db(file: UploadFile = File(...), authorization: str = Header("")):
-    if not ADMIN_SECRET or authorization != f"Bearer {ADMIN_SECRET}":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    content = await file.read()
-    db_path = Path(config.DATABASE_PATH)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(db_path, "wb") as f:
-        f.write(content)
-    return {"status": "ok", "size": len(content)}
-
 # Serve frontend static files if the dist directory exists
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
