@@ -10,12 +10,15 @@ logger = logging.getLogger(__name__)
 
 
 async def init_db():
-    """Verify database connectivity on startup."""
-    async with await psycopg.AsyncConnection.connect(
-        config.DATABASE_URL, autocommit=True
-    ) as conn:
-        await conn.execute("SELECT 1")
-    logger.info("Database connection verified")
+    """Verify database connectivity on startup (non-fatal)."""
+    try:
+        async with await psycopg.AsyncConnection.connect(
+            config.DATABASE_URL, autocommit=True
+        ) as conn:
+            await conn.execute("SELECT 1")
+        logger.info("Database connection verified")
+    except Exception as e:
+        logger.warning(f"Database not reachable at startup (will retry per-request): {e}")
 
 
 async def close_db():
