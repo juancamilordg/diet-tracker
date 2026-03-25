@@ -3,42 +3,33 @@ from contextlib import asynccontextmanager
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
 
 import config
 
 logger = logging.getLogger(__name__)
 
-_pool: AsyncConnectionPool | None = None
-
 
 async def init_db():
-    """Create the psycopg async connection pool."""
-    global _pool
-    if _pool is not None:
-        return
-    _pool = AsyncConnectionPool(
-        conninfo=config.DATABASE_URL,
-        min_size=2,
-        max_size=10,
-        open=False,
-        kwargs={"autocommit": True, "row_factory": dict_row},
-    )
-    await _pool.open()
-    logger.info("Database pool created")
+    """Verify database connectivity on startup."""
+    async with await psycopg.AsyncConnection.connect(
+        config.DATABASE_URL, autocommit=True
+    ) as conn:
+        await conn.execute("SELECT 1")
+    logger.info("Database connection verified")
 
 
 async def close_db():
-    """Close the connection pool."""
-    global _pool
-    if _pool:
-        await _pool.close()
-        _pool = None
-        logger.info("Database pool closed")
+    """No pool to close — connections are created per-request."""
+    pass
 
 
 @asynccontextmanager
 async def get_db():
-    """Async context manager that yields a psycopg async connection."""
-    async with _pool.connection() as conn:
+    """Async context manager that creates a fresh connection with autocommit."""
+    conn = await psycopg.AsyncConnection.connect(
+        config.DATABASE_URL, autocommit=True, row_factory=dict_row
+    )
+    try:
         yield conn
+    finally:
+        await conn.close()
