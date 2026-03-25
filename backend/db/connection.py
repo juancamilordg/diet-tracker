@@ -11,15 +11,14 @@ logger = logging.getLogger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
-def _build_direct_url(url: str) -> str:
-    """Convert a Supabase pooler URL to a direct connection URL if needed.
+def _to_direct_url(url: str) -> str:
+    """Convert a Supabase pooler URL to a direct connection URL.
 
-    Supabase pooler URLs (port 6543) don't work well with asyncpg.
-    Direct URLs use db.PROJECT_REF.supabase.co:5432 with user 'postgres'.
+    Pooler URLs (pooler.supabase.com:6543) use username 'postgres.PROJECT_REF'.
+    Direct URLs use db.PROJECT_REF.supabase.co:5432 with username 'postgres'.
     """
     p = urlparse(url)
     if p.hostname and "pooler.supabase.com" in p.hostname:
-        # Extract project ref from username (postgres.PROJECT_REF -> PROJECT_REF)
         username = p.username or ""
         project_ref = username.replace("postgres.", "") if "." in username else username
         password = quote_plus(p.password) if p.password else ""
@@ -32,8 +31,15 @@ async def init_db():
     global _pool
     if _pool is not None:
         return
-    direct_url = _build_direct_url(config.DATABASE_URL)
-    _pool = await asyncpg.create_pool(direct_url, min_size=2, max_size=10)
+
+    db_url = config.DATABASE_URL
+
+    # Convert pooler URLs to direct connection for asyncpg compatibility
+    if "pooler.supabase.com" in db_url:
+        db_url = _to_direct_url(db_url)
+        logger.info("Converted pooler URL to direct connection")
+
+    _pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)
     logger.info("Database pool created")
 
 
