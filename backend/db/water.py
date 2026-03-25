@@ -2,19 +2,22 @@ from db.connection import get_db
 from db.goals import get_goals
 
 
+def _row_to_dict(row) -> dict:
+    d = dict(row)
+    for k, v in d.items():
+        if hasattr(v, 'isoformat'):
+            d[k] = v.isoformat()
+    return d
+
+
 async def log_water(user_id: int = 1, amount_ml: int = 0) -> dict:
     """INSERT a water log entry and return it."""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "INSERT INTO water_log (user_id, amount_ml) VALUES (?, ?)",
-            (user_id, amount_ml),
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO water_log (user_id, amount_ml) VALUES ($1, $2) RETURNING *",
+            user_id, amount_ml,
         )
-        await db.commit()
-        entry_id = cursor.lastrowid
-
-        row = await db.execute("SELECT * FROM water_log WHERE id = ?", (entry_id,))
-        result = await row.fetchone()
-        return dict(result)
+        return _row_to_dict(row)
 
 
 async def get_water_today(user_id: int = 1) -> dict:
@@ -22,26 +25,22 @@ async def get_water_today(user_id: int = 1) -> dict:
     goals = await get_goals(user_id)
     target_ml = goals.get("water_target_ml", 3500)
 
-    async with get_db() as db:
-        # Total for today
-        cursor = await db.execute(
+    async with get_db() as conn:
+        total_row = await conn.fetchrow(
             "SELECT COALESCE(SUM(amount_ml), 0) AS total_ml "
-            "FROM water_log WHERE user_id = ? AND date(logged_at) = date('now')",
-            (user_id,),
+            "FROM water_log WHERE user_id = $1 AND logged_at::date = CURRENT_DATE",
+            user_id,
         )
-        total_row = await cursor.fetchone()
         total_ml = total_row["total_ml"] if total_row else 0
 
-        # Individual entries for today
-        cursor = await db.execute(
-            "SELECT * FROM water_log WHERE user_id = ? AND date(logged_at) = date('now') "
+        entries = await conn.fetch(
+            "SELECT * FROM water_log WHERE user_id = $1 AND logged_at::date = CURRENT_DATE "
             "ORDER BY logged_at DESC",
-            (user_id,),
+            user_id,
         )
-        entries = await cursor.fetchall()
 
         return {
             "total_ml": total_ml,
             "target_ml": target_ml,
-            "entries": [dict(e) for e in entries],
+            "entries": [_row_to_dict(e) for e in entries],
         }

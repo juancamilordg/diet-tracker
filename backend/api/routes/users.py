@@ -22,14 +22,18 @@ async def create_user(data: UserCreate):
         return await users_db.get_or_create_by_telegram_id(data.telegram_id, data.display_name)
     # Manual creation without telegram_id
     from db.connection import get_db
-    async with get_db() as db:
-        cursor = await db.execute(
-            "INSERT INTO users (display_name) VALUES (?)", (data.display_name,)
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO users (display_name) VALUES ($1) RETURNING *",
+            data.display_name,
         )
-        await db.commit()
-        user_id = cursor.lastrowid
-        await db.execute("INSERT OR IGNORE INTO goals (user_id) VALUES (?)", (user_id,))
-        await db.commit()
-        cursor = await db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-        row = await cursor.fetchone()
-        return dict(row)
+        user_id = row["id"]
+        await conn.execute(
+            "INSERT INTO goals (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
+        d = dict(row)
+        for k, v in d.items():
+            if hasattr(v, 'isoformat'):
+                d[k] = v.isoformat()
+        return d

@@ -3,13 +3,25 @@ from db.goals import get_goals
 from db.water import get_water_today
 
 
+def _row_to_dict(row) -> dict:
+    d = dict(row)
+    for k, v in d.items():
+        if hasattr(v, 'isoformat'):
+            d[k] = v.isoformat()
+    return d
+
+
 async def get_day_summary(user_id: int = 1, date: str | None = None) -> dict:
     """Return aggregated macro totals for a given date (defaults to today)."""
-    date_expr = "date(?)" if date else "date('now')"
-    params = (user_id, date) if date else (user_id,)
+    if date:
+        date_filter = "logged_at::date = $2::date"
+        params = (user_id, date)
+    else:
+        date_filter = "logged_at::date = CURRENT_DATE"
+        params = (user_id,)
 
-    async with get_db() as db:
-        cursor = await db.execute(
+    async with get_db() as conn:
+        row = await conn.fetchrow(
             f"""
             SELECT
                 COALESCE(SUM(calories), 0)   AS total_calories,
@@ -20,11 +32,10 @@ async def get_day_summary(user_id: int = 1, date: str | None = None) -> dict:
                 COALESCE(SUM(sodium_mg), 0)  AS total_sodium_mg,
                 COUNT(*)                      AS meal_count
             FROM meals
-            WHERE user_id = ? AND date(logged_at) = {date_expr}
+            WHERE user_id = $1 AND {date_filter}
             """,
-            params,
+            *params,
         )
-        row = await cursor.fetchone()
         return dict(row) if row else {
             "total_calories": 0,
             "total_protein_g": 0,
@@ -43,43 +54,47 @@ async def get_today_summary(user_id: int = 1) -> dict:
 async def get_weekly_data(user_id: int = 1, date: str | None = None) -> list[dict]:
     """Return daily aggregates for 7 days ending on the given date."""
     if date:
-        date_filter = "date(logged_at) >= date(?, '-6 days') AND date(logged_at) <= date(?)"
-        params = (user_id, date, date)
+        date_filter = "logged_at::date >= ($2::date - INTERVAL '6 days')::date AND logged_at::date <= $2::date"
+        params = (user_id, date)
     else:
-        date_filter = "date(logged_at) >= date('now', '-6 days')"
+        date_filter = "logged_at::date >= (CURRENT_DATE - INTERVAL '6 days')::date"
         params = (user_id,)
 
-    async with get_db() as db:
-        cursor = await db.execute(
+    async with get_db() as conn:
+        rows = await conn.fetch(
             f"""
             SELECT
-                date(logged_at) AS date,
+                logged_at::date AS date,
                 COALESCE(SUM(calories), 0)   AS total_calories,
                 COALESCE(SUM(protein_g), 0)  AS total_protein_g,
                 COALESCE(SUM(carbs_g), 0)    AS total_carbs_g,
                 COALESCE(SUM(fat_g), 0)      AS total_fat_g,
                 COUNT(*)                      AS meal_count
             FROM meals
-            WHERE user_id = ? AND {date_filter}
-            GROUP BY date(logged_at)
-            ORDER BY date(logged_at) ASC
+            WHERE user_id = $1 AND {date_filter}
+            GROUP BY logged_at::date
+            ORDER BY logged_at::date ASC
             """,
-            params,
+            *params,
         )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [_row_to_dict(r) for r in rows]
 
 
 async def get_last_meal(user_id: int = 1, date: str | None = None) -> dict | None:
     """Return the last meal logged on a given date (defaults to today)."""
-    date_expr = "date(?)" if date else "date('now')"
-    params = (user_id, date) if date else (user_id,)
-    query = f"SELECT * FROM meals WHERE user_id = ? AND date(logged_at) = {date_expr} ORDER BY logged_at DESC LIMIT 1"
+    if date:
+        date_filter = "logged_at::date = $2::date"
+        params = (user_id, date)
+    else:
+        date_filter = "logged_at::date = CURRENT_DATE"
+        params = (user_id,)
 
-    async with get_db() as db:
-        cursor = await db.execute(query, params)
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            f"SELECT * FROM meals WHERE user_id = $1 AND {date_filter} ORDER BY logged_at DESC LIMIT 1",
+            *params,
+        )
+        return _row_to_dict(row) if row else None
 
 
 async def get_dashboard_data(user_id: int = 1, date: str | None = None) -> dict:

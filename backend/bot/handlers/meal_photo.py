@@ -1,5 +1,7 @@
 import logging
+import uuid
 
+import httpx
 from telegram import Update
 from telegram.ext import (
     CallbackQueryHandler,
@@ -10,6 +12,7 @@ from telegram.ext import (
     filters,
 )
 
+import config
 from ai.analyzer import analyze_photo, analyze_text
 from bot.formatters import format_nutrition_estimate, format_meal_saved
 from bot.keyboards import confirm_keyboard, meal_category_keyboard
@@ -47,10 +50,11 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = update.message.caption or ""
         analysis = await analyze_photo(bytes(photo_bytes), caption=caption)
 
-        # Store pending meal data
+        # Store pending meal data (keep raw bytes for Supabase upload)
         context.user_data["pending_meal"] = {
             "analysis": analysis,
             "photo_file_id": photo.file_id,
+            "photo_bytes": bytes(photo_bytes),
             "user_id": user_id,
         }
 
@@ -169,9 +173,31 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     analysis = pending["analysis"]
     photo_file_id = pending.get("photo_file_id")
+    photo_bytes = pending.get("photo_bytes")
     user_id = pending.get("user_id", 1)
 
     try:
+        # Upload photo to Supabase Storage if we have bytes
+        photo_url = None
+        if photo_bytes and config.SUPABASE_URL and config.SUPABASE_SERVICE_ROLE_KEY:
+            filename = f"{uuid.uuid4().hex}.jpg"
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.post(
+                        f"{config.SUPABASE_URL}/storage/v1/object/meal-photos/{filename}",
+                        headers={
+                            "Authorization": f"Bearer {config.SUPABASE_SERVICE_ROLE_KEY}",
+                            "Content-Type": "image/jpeg",
+                        },
+                        content=photo_bytes,
+                    )
+                    if resp.status_code in (200, 201):
+                        photo_url = f"{config.SUPABASE_URL}/storage/v1/object/public/meal-photos/{filename}"
+                    else:
+                        logger.warning(f"Storage upload failed: {resp.status_code}")
+            except Exception as e:
+                logger.warning(f"Storage upload error: {e}")
+
         # Save meal to database
         meal_data = {
             "description": analysis.get("meal_name") or analysis.get("description", "Unknown meal"),
@@ -182,6 +208,7 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "fat_g": analysis.get("fat_g", 0),
             "fiber_g": analysis.get("fiber_g", 0),
             "sodium_mg": analysis.get("sodium_mg", 0),
+            "photo_url": photo_url,
             "photo_file_id": photo_file_id,
             "input_method": "photo" if photo_file_id else "text",
             "ai_raw_response": analysis.get("ai_raw_response"),

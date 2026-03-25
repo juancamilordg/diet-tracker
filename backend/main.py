@@ -11,7 +11,7 @@ from starlette.responses import FileResponse
 import uvicorn
 
 import config
-from db.connection import init_db
+from db.connection import init_db, close_db
 from api.routes import dashboard, meals, goals, water, stats, photos, users
 from bot.setup import create_bot, start_bot, stop_bot
 
@@ -48,6 +48,8 @@ async def lifespan(app: FastAPI):
     if bot_app:
         await stop_bot(bot_app)
         logger.info("Telegram bot stopped")
+    await close_db()
+    logger.info("Database pool closed")
 
 app = FastAPI(title="Nutrition Tracker API", lifespan=lifespan)
 
