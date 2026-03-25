@@ -22,6 +22,7 @@ async def init_db():
         min_size=2,
         max_size=10,
         open=False,
+        kwargs={"autocommit": True, "row_factory": dict_row},
     )
     await _pool.open()
     logger.info("Database pool created")
@@ -38,7 +39,6 @@ async def close_db():
 
 @asynccontextmanager
 async def get_db():
-    """Async context manager that yields a psycopg async connection with dict rows."""
+    """Async context manager that yields a psycopg async connection."""
     async with _pool.connection() as conn:
-        conn.row_factory = dict_row
         yield conn
