@@ -4,7 +4,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import RedirectResponse
 from typing import Optional
-from api.schemas import MealCreate, MealUpdate, AnalyzeRequest
+from api.schemas import MealCreate, MealUpdate
 from api.deps import get_current_user_id
 from db import meals as meals_db
 from ai.analyzer import analyze_photo, analyze_text
