@@ -23,6 +23,10 @@ export default function MealAnalysis() {
     notes: '',
   })
   const [mealDate, setMealDate] = useState(toLocalDateStr(new Date()))
+  const now = new Date()
+  const [mealTime, setMealTime] = useState(
+    `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  )
   const [photoUrl, setPhotoUrl] = useState<string | undefined>()
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [existingPhoto, setExistingPhoto] = useState<{ photo_file_id?: string; photo_url?: string }>({})
@@ -89,7 +93,7 @@ export default function MealAnalysis() {
       const sign = offset >= 0 ? '+' : '-'
       const hh = String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0')
       const mm = String(Math.abs(offset) % 60).padStart(2, '0')
-      const loggedAt = `${mealDate}T12:00:00${sign}${hh}:${mm}`
+      const loggedAt = `${mealDate}T${mealTime}:00${sign}${hh}:${mm}`
 
       const payload: any = {
         ...form,
@@ -135,7 +139,7 @@ export default function MealAnalysis() {
         </p>
       </div>
 
-      {/* Date selector — only shown for new meals */}
+      {/* Date + time selector — only shown for new meals */}
       {!isEdit && (
         <div className="flex items-center justify-center gap-3 mb-8">
           <span className="text-[10px] uppercase tracking-[0.15em] text-on-surface-variant font-semibold">Date</span>
@@ -149,6 +153,13 @@ export default function MealAnalysis() {
               onSelect={setMealDate}
             />
           </div>
+          <span className="text-[10px] uppercase tracking-[0.15em] text-on-surface-variant font-semibold">Time</span>
+          <input
+            type="time"
+            value={mealTime}
+            onChange={e => setMealTime(e.target.value)}
+            className="bg-surface-container-low px-4 py-2 rounded-xl text-sm font-medium text-on-surface border-none focus:ring-1 focus:ring-primary-container"
+          />
         </div>
       )}
 
