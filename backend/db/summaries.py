@@ -7,19 +7,12 @@ def _serialize(d: dict) -> dict:
     return {k: v.isoformat() if hasattr(v, 'isoformat') else v for k, v in d.items()}
 
 
-async def get_day_summary(user_id: int = 1, date: str | None = None) -> dict:
-    """Return aggregated macro totals for a given date (defaults to today)."""
-    if date:
-        date_filter = "logged_at::date = %s::date"
-        params = (user_id, date)
-    else:
-        date_filter = "logged_at::date = CURRENT_DATE"
-        params = (user_id,)
-
+async def get_day_summary(user_id: int, date: str) -> dict:
+    """Return aggregated macro totals for a given date."""
     async with get_db() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"""
+                """
                 SELECT
                     COALESCE(SUM(calories), 0)   AS total_calories,
                     COALESCE(SUM(protein_g), 0)  AS total_protein_g,
@@ -29,9 +22,9 @@ async def get_day_summary(user_id: int = 1, date: str | None = None) -> dict:
                     COALESCE(SUM(sodium_mg), 0)  AS total_sodium_mg,
                     COUNT(*)                      AS meal_count
                 FROM meals
-                WHERE user_id = %s AND {date_filter}
+                WHERE user_id = %s AND logged_at::date = %s::date
                 """,
-                params,
+                (user_id, date),
             )
             row = await cur.fetchone()
             return dict(row) if row else {
@@ -44,24 +37,12 @@ async def get_day_summary(user_id: int = 1, date: str | None = None) -> dict:
             }
 
 
-# Keep old name as alias for bot handlers
-async def get_today_summary(user_id: int = 1) -> dict:
-    return await get_day_summary(user_id)
-
-
-async def get_weekly_data(user_id: int = 1, date: str | None = None) -> list[dict]:
+async def get_weekly_data(user_id: int, date: str) -> list[dict]:
     """Return daily aggregates for 7 days ending on the given date."""
-    if date:
-        date_filter = "logged_at::date >= (%s::date - INTERVAL '6 days')::date AND logged_at::date <= %s::date"
-        params = (user_id, date, date)
-    else:
-        date_filter = "logged_at::date >= (CURRENT_DATE - INTERVAL '6 days')::date"
-        params = (user_id,)
-
     async with get_db() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"""
+                """
                 SELECT
                     logged_at::date AS date,
                     COALESCE(SUM(calories), 0)   AS total_calories,
@@ -70,42 +51,37 @@ async def get_weekly_data(user_id: int = 1, date: str | None = None) -> list[dic
                     COALESCE(SUM(fat_g), 0)      AS total_fat_g,
                     COUNT(*)                      AS meal_count
                 FROM meals
-                WHERE user_id = %s AND {date_filter}
+                WHERE user_id = %s
+                  AND logged_at::date >= (%s::date - INTERVAL '6 days')::date
+                  AND logged_at::date <= %s::date
                 GROUP BY logged_at::date
                 ORDER BY logged_at::date ASC
                 """,
-                params,
+                (user_id, date, date),
             )
             rows = await cur.fetchall()
             return [_serialize(r) for r in rows]
 
 
-async def get_last_meal(user_id: int = 1, date: str | None = None) -> dict | None:
-    """Return the last meal logged on a given date (defaults to today)."""
-    if date:
-        date_filter = "logged_at::date = %s::date"
-        params = (user_id, date)
-    else:
-        date_filter = "logged_at::date = CURRENT_DATE"
-        params = (user_id,)
-
+async def get_last_meal(user_id: int, date: str) -> dict | None:
+    """Return the last meal logged on a given date."""
     async with get_db() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"SELECT * FROM meals WHERE user_id = %s AND {date_filter} ORDER BY logged_at DESC LIMIT 1",
-                params,
+                "SELECT * FROM meals WHERE user_id = %s AND logged_at::date = %s::date ORDER BY logged_at DESC LIMIT 1",
+                (user_id, date),
             )
             row = await cur.fetchone()
             return _serialize(row) if row else None
 
 
-async def get_dashboard_data(user_id: int = 1, date: str | None = None) -> dict:
+async def get_dashboard_data(user_id: int, date: str) -> dict:
     """Combine day summary, goals, last meal, weekly data, and water for a user."""
     day_summary = await get_day_summary(user_id, date)
     goals = await get_goals(user_id)
     last_meal = await get_last_meal(user_id, date)
     weekly_data = await get_weekly_data(user_id, date)
-    water_today = await get_water_today(user_id)
+    water_today = await get_water_today(user_id, date)
 
     return {
         "today_summary": day_summary,

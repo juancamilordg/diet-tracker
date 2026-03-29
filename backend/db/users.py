@@ -49,3 +49,15 @@ async def get_user(user_id: int) -> dict | None:
             await cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             row = await cur.fetchone()
             return _serialize(row) if row else None
+
+
+async def update_user_timezone(user_id: int, timezone: str) -> dict | None:
+    """Update the user's stored timezone. Returns updated user or None."""
+    async with get_db() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET timezone = %s WHERE id = %s RETURNING *",
+                (timezone, user_id),
+            )
+            row = await cur.fetchone()
+            return _serialize(row) if row else None

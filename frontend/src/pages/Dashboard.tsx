@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api/client'
+import { toLocalDateStr } from '../utils/date'
 import CalorieHero from '../components/dashboard/CalorieHero'
 import TelegramCard from '../components/dashboard/TelegramCard'
 import MacroSection from '../components/dashboard/MacroSection'
@@ -7,17 +8,13 @@ import WeeklyChart from '../components/dashboard/WeeklyChart'
 import MicronutrientBars from '../components/dashboard/MicronutrientBars'
 import CalendarPicker from '../components/dashboard/CalendarPicker'
 
-function toDateStr(d: Date) {
-  return d.toISOString().split('T')[0]
-}
-
 function formatDisplayDate(dateStr: string | null) {
   if (!dateStr) return 'Today'
-  const today = toDateStr(new Date())
+  const today = toLocalDateStr(new Date())
   if (dateStr === today) return 'Today'
   const yesterday = new Date()
   yesterday.setDate(yesterday.getDate() - 1)
-  if (dateStr === toDateStr(yesterday)) return 'Yesterday'
+  if (dateStr === toLocalDateStr(yesterday)) return 'Yesterday'
   const d = new Date(dateStr + 'T00:00:00')
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
@@ -44,21 +41,21 @@ export default function Dashboard() {
   const goBack = () => {
     const base = selectedDate ? new Date(selectedDate + 'T00:00:00') : new Date()
     base.setDate(base.getDate() - 1)
-    setSelectedDate(toDateStr(base))
+    setSelectedDate(toLocalDateStr(base))
   }
 
   const goForward = () => {
     const base = selectedDate ? new Date(selectedDate + 'T00:00:00') : new Date()
     base.setDate(base.getDate() + 1)
-    const tomorrow = toDateStr(base)
-    const today = toDateStr(new Date())
+    const tomorrow = toLocalDateStr(base)
+    const today = toLocalDateStr(new Date())
     setSelectedDate(tomorrow > today ? null : tomorrow === today ? null : tomorrow)
   }
 
   const goToday = () => setSelectedDate(null)
 
-  const isToday = !selectedDate || selectedDate === toDateStr(new Date())
-  const todayStr = toDateStr(new Date())
+  const isToday = !selectedDate || selectedDate === toLocalDateStr(new Date())
+  const todayStr = toLocalDateStr(new Date())
 
   const onCalendarSelect = (date: string) => {
     setSelectedDate(date >= todayStr ? null : date)

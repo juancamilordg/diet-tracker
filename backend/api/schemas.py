@@ -53,3 +53,8 @@ class UserOut(BaseModel):
     id: int
     telegram_id: Optional[int] = None
     display_name: str
+    timezone: Optional[str] = None
+
+
+class TimezoneUpdate(BaseModel):
+    timezone: str

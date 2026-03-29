@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../api/client'
+import { toLocalDateStr } from '../../utils/date'
 import NutrientInput from './NutrientInput'
 import PhotoUpload from './PhotoUpload'
+import CalendarPicker from '../dashboard/CalendarPicker'
 
 export default function MealAnalysis() {
   const { id } = useParams()
@@ -20,6 +22,7 @@ export default function MealAnalysis() {
     meal_category: 'lunch' as string,
     notes: '',
   })
+  const [mealDate, setMealDate] = useState(toLocalDateStr(new Date()))
   const [photoUrl, setPhotoUrl] = useState<string | undefined>()
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [existingPhoto, setExistingPhoto] = useState<{ photo_file_id?: string; photo_url?: string }>({})
@@ -81,9 +84,17 @@ export default function MealAnalysis() {
     if (!form.description) return
     setSaving(true)
     try {
+      // Build timezone-aware logged_at timestamp
+      const offset = -new Date().getTimezoneOffset()
+      const sign = offset >= 0 ? '+' : '-'
+      const hh = String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0')
+      const mm = String(Math.abs(offset) % 60).padStart(2, '0')
+      const loggedAt = `${mealDate}T12:00:00${sign}${hh}:${mm}`
+
       const payload: any = {
         ...form,
         input_method: photoFile ? 'photo' : 'manual',
+        logged_at: loggedAt,
       }
       // Upload new photo if selected
       if (photoFile) {
@@ -123,6 +134,23 @@ export default function MealAnalysis() {
           {analyzing ? 'Analyzing meal with AI...' : 'Review and calibrate nutritional data for laboratory precision.'}
         </p>
       </div>
+
+      {/* Date selector — only shown for new meals */}
+      {!isEdit && (
+        <div className="flex items-center justify-center gap-3 mb-8">
+          <span className="text-[10px] uppercase tracking-[0.15em] text-on-surface-variant font-semibold">Date</span>
+          <div className="flex items-center gap-2 bg-surface-container-low px-4 py-2 rounded-xl">
+            <span className="text-sm font-medium text-on-surface">
+              {mealDate === toLocalDateStr(new Date()) ? 'Today' : new Date(mealDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+            </span>
+            <CalendarPicker
+              selected={mealDate}
+              maxDate={toLocalDateStr(new Date())}
+              onSelect={setMealDate}
+            />
+          </div>
+        </div>
+      )}
 
       <PhotoUpload photoUrl={photoUrl} onPhotoChange={handlePhotoChange} />
 

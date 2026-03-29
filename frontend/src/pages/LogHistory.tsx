@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
+import { toLocalDateStr } from '../utils/date'
 import DailyMacroHeader from '../components/feed/DailyMacroHeader'
 import DateDivider from '../components/feed/DateDivider'
 import MealCard from '../components/feed/MealCard'
@@ -15,7 +16,7 @@ export default function LogHistory() {
       setMeals(data)
 
       // Calculate today's totals
-      const today = new Date().toISOString().split('T')[0]
+      const today = toLocalDateStr(new Date())
       const todayMeals = data.filter((m: any) => m.logged_at?.startsWith(today))
       setTodayTotals({
         calories: todayMeals.reduce((s: number, m: any) => s + (m.calories || 0), 0),
@@ -51,7 +52,7 @@ export default function LogHistory() {
     grouped[date].push(meal)
   })
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = toLocalDateStr(new Date())
 
   if (loading) {
     return (

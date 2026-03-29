@@ -13,7 +13,10 @@ export function getStoredUserId(): number {
 }
 
 function userHeaders(): Record<string, string> {
-  return { 'X-User-ID': getCurrentUserId() }
+  return {
+    'X-User-ID': getCurrentUserId(),
+    'X-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+  }
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -31,8 +34,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   // Users
   getUsers: () => request<any[]>('/users'),
+  getMe: () => request<any>('/users/me'),
   createUser: (data: { display_name: string; telegram_id?: number }) =>
     request<any>('/users', { method: 'POST', body: JSON.stringify(data) }),
+  updateTimezone: (timezone: string) =>
+    request<any>('/users/timezone', { method: 'PUT', body: JSON.stringify({ timezone }) }),
 
   // Dashboard
   getDashboard: (date?: string) => request<any>(date ? `/dashboard?date=${date}` : '/dashboard'),

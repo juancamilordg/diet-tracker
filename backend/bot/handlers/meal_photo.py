@@ -1,5 +1,7 @@
 import logging
 import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 from telegram import Update
@@ -15,7 +17,7 @@ from telegram.ext import (
 import config
 from ai.analyzer import analyze_photo, analyze_text
 from bot.formatters import format_nutrition_estimate, format_meal_saved
-from bot.keyboards import confirm_keyboard, meal_category_keyboard
+from bot.keyboards import confirm_keyboard, meal_category_keyboard, date_keyboard
 from db import meals as db_meals
 from db.users import get_or_create_by_telegram_id
 
@@ -24,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Conversation states
 CONFIRM = 0
 CATEGORY = 1
+DATE = 2
 
 
 async def _ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -32,6 +35,7 @@ async def _ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         tg_user = update.effective_user
         user = await get_or_create_by_telegram_id(tg_user.id, tg_user.first_name)
         context.user_data["user_id"] = user["id"]
+        context.user_data["timezone"] = user.get("timezone", "Europe/London")
     return context.user_data["user_id"]
 
 
@@ -151,7 +155,7 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle meal category selection and save to database."""
+    """Handle meal category selection and show date keyboard."""
     query = update.callback_query
     logger.info(f"category_callback triggered with data: {query.data}")
 
@@ -162,6 +166,42 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Extract category from callback data (e.g., "cat_breakfast" -> "breakfast")
     category = query.data.replace("cat_", "")
+
+    pending = context.user_data.get("pending_meal")
+    if not pending:
+        try:
+            await query.edit_message_text("No pending meal found. Please try again.")
+        except Exception:
+            pass
+        return ConversationHandler.END
+
+    # Store category and show date selection
+    pending["category"] = category
+    tz = context.user_data.get("timezone", "Europe/London")
+    await query.edit_message_text(
+        "When did you have this meal?",
+        reply_markup=date_keyboard(tz),
+    )
+    return DATE
+
+
+async def date_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle date selection and save the meal."""
+    query = update.callback_query
+    logger.info(f"date_callback triggered with data: {query.data}")
+
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    date_data = query.data  # e.g. "date_today", "date_2026-03-28", "date_web"
+
+    if date_data == "date_web":
+        await query.edit_message_text(
+            "For meals older than 7 days, please use the web app to log them with a custom date."
+        )
+        return ConversationHandler.END
 
     pending = context.user_data.pop("pending_meal", None)
     if not pending:
@@ -175,6 +215,20 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file_id = pending.get("photo_file_id")
     photo_bytes = pending.get("photo_bytes")
     user_id = pending.get("user_id", 1)
+    category = pending.get("category", "lunch")
+    tz = context.user_data.get("timezone", "Europe/London")
+
+    # Build logged_at timestamp
+    logged_at = None
+    if date_data != "date_today":
+        date_str = date_data.replace("date_", "")
+        try:
+            # Construct a noon timestamp in the user's timezone
+            tz_obj = ZoneInfo(tz)
+            local_dt = datetime.fromisoformat(f"{date_str}T12:00:00").replace(tzinfo=tz_obj)
+            logged_at = local_dt.isoformat()
+        except Exception as e:
+            logger.warning(f"Could not parse date {date_str}: {e}")
 
     try:
         # Upload photo to Supabase Storage if we have bytes
@@ -213,9 +267,12 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "input_method": "photo" if photo_file_id else "text",
             "ai_raw_response": analysis.get("ai_raw_response"),
         }
+        if logged_at:
+            meal_data["logged_at"] = logged_at
+
         await db_meals.create_meal(meal_data, user_id=user_id)
 
-        # Send confirmation (plain text — no parse_mode to avoid escaping issues)
+        # Send confirmation
         confirmation = format_meal_saved(analysis, category)
         await query.edit_message_text(confirmation)
 
@@ -245,6 +302,7 @@ photo_conv_handler = ConversationHandler(
     states={
         CONFIRM: [CallbackQueryHandler(confirm_callback, pattern="^confirm_")],
         CATEGORY: [CallbackQueryHandler(category_callback, pattern="^cat_")],
+        DATE: [CallbackQueryHandler(date_callback, pattern="^date_")],
     },
     fallbacks=[CommandHandler("cancel", cancel)],
     per_message=False,

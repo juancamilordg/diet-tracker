@@ -1,6 +1,10 @@
-from fastapi import Request
+from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo, available_timezones
 
-from db.users import get_all_users
+from fastapi import Depends, HTTPException, Request
+
+from db.users import get_all_users, get_user
 
 _first_user_cache: int | None = None
 
@@ -25,3 +29,34 @@ async def get_current_user_id(request: Request) -> int:
         else:
             _first_user_cache = 1
     return _first_user_cache
+
+
+@dataclass
+class UserDateInfo:
+    timezone: str
+    today: str
+
+
+async def get_user_timezone(
+    request: Request, user_id: int = Depends(get_current_user_id)
+) -> UserDateInfo:
+    """Resolve the user's timezone and compute their local 'today' date."""
+    tz_header = request.headers.get("X-Timezone")
+    if tz_header and tz_header in available_timezones():
+        tz = tz_header
+    else:
+        user = await get_user(user_id)
+        tz = (user or {}).get("timezone", "Europe/London")
+    today = datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d")
+    return UserDateInfo(timezone=tz, today=today)
+
+
+def validate_date_param(date_str: str, user_today: str) -> str:
+    """Parse and validate a date string. Raises 422 for bad format or future dates."""
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid date format: {date_str!r}. Expected YYYY-MM-DD.")
+    if date_str > user_today:
+        raise HTTPException(status_code=422, detail="Cannot log or view data for future dates.")
+    return date_str

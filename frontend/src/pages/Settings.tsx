@@ -5,6 +5,22 @@ import TDEECalculator from '../components/settings/TDEECalculator'
 import MacroSliders from '../components/settings/MacroSliders'
 import TelegramStatus from '../components/settings/TelegramStatus'
 
+// Common IANA timezones for manual selection
+const COMMON_TIMEZONES = [
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome',
+  'Europe/Amsterdam', 'Europe/Brussels', 'Europe/Zurich', 'Europe/Stockholm',
+  'Europe/Warsaw', 'Europe/Athens', 'Europe/Helsinki', 'Europe/Lisbon',
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'America/Toronto', 'America/Vancouver', 'America/Mexico_City', 'America/Sao_Paulo',
+  'America/Buenos_Aires', 'America/Bogota', 'America/Lima',
+  'Asia/Tokyo', 'Asia/Seoul', 'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Singapore',
+  'Asia/Dubai', 'Asia/Kolkata', 'Asia/Bangkok', 'Asia/Jakarta',
+  'Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane', 'Australia/Perth',
+  'Pacific/Auckland', 'Pacific/Honolulu',
+  'Africa/Cairo', 'Africa/Johannesburg', 'Africa/Lagos',
+  'UTC',
+]
+
 function useDarkMode() {
   const [dark, setDark] = useState(() => {
     const stored = localStorage.getItem('darkMode')
@@ -29,11 +45,16 @@ export default function Settings() {
   const [dark, setDark] = useDarkMode()
   const [tdeeOpen, setTdeeOpen] = useState(false)
   const calorieInputRef = useRef<HTMLInputElement>(null)
+  const [userTimezone, setUserTimezone] = useState<string>('')
+  const [tzSearch, setTzSearch] = useState('')
+  const [tzSaving, setTzSaving] = useState(false)
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
 
   const fetchGoals = async () => {
     try {
-      const data = await api.getGoals()
+      const [data, me] = await Promise.all([api.getGoals(), api.getMe()])
       setGoals(data)
+      setUserTimezone(me.timezone || 'Europe/London')
     } catch (err) {
       console.error('Failed to load goals:', err)
     } finally {
@@ -42,6 +63,19 @@ export default function Settings() {
   }
 
   useEffect(() => { fetchGoals() }, [])
+
+  const handleTimezoneUpdate = async (tz: string) => {
+    setTzSaving(true)
+    try {
+      const updated = await api.updateTimezone(tz)
+      setUserTimezone(updated.timezone)
+      setTzSearch('')
+    } catch (err) {
+      console.error('Failed to update timezone:', err)
+    } finally {
+      setTzSaving(false)
+    }
+  }
 
   const handleUpdate = async (data: any) => {
     try {
@@ -129,6 +163,55 @@ export default function Settings() {
         <MacroSliders goals={goals} onUpdate={handleUpdate} />
 
         <TelegramStatus />
+
+        {/* Timezone */}
+        <div className="md:col-span-4 bg-surface-container-low p-8 rounded-xl border border-outline-variant/10">
+          <h3 className="text-xs font-bold tracking-[0.15em] uppercase text-on-surface-variant mb-6">Timezone</h3>
+          <div className="space-y-4">
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-on-surface-variant">Current</span>
+              <p className="text-sm font-bold text-on-surface mt-1">{userTimezone}</p>
+            </div>
+            {browserTz !== userTimezone && (
+              <div>
+                <span className="text-[10px] uppercase tracking-wider text-on-surface-variant">Browser detected</span>
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-sm text-on-surface-variant">{browserTz}</p>
+                  <button
+                    onClick={() => handleTimezoneUpdate(browserTz)}
+                    disabled={tzSaving}
+                    className="text-xs font-bold uppercase tracking-widest text-primary hover:opacity-70 transition-opacity disabled:opacity-40"
+                  >
+                    Use this
+                  </button>
+                </div>
+              </div>
+            )}
+            <div>
+              <input
+                type="text"
+                placeholder="Search timezone..."
+                value={tzSearch}
+                onChange={e => setTzSearch(e.target.value)}
+                className="w-full bg-surface-container border-none rounded-lg px-3 py-2 text-xs text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary-container"
+              />
+              {tzSearch && (
+                <div className="mt-1 max-h-36 overflow-y-auto rounded-lg bg-surface-container border border-outline-variant/20">
+                  {COMMON_TIMEZONES.filter(tz => tz.toLowerCase().includes(tzSearch.toLowerCase())).map(tz => (
+                    <button
+                      key={tz}
+                      onClick={() => handleTimezoneUpdate(tz)}
+                      disabled={tzSaving}
+                      className="w-full text-left px-3 py-2 text-xs text-on-surface hover:bg-surface-container-high transition-colors disabled:opacity-40"
+                    >
+                      {tz}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Calorie Target */}
         <div className="md:col-span-5 bg-surface-container-low p-8 rounded-xl border border-outline-variant/10">

@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -19,9 +21,13 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tg_user = update.effective_user
             user = await get_or_create_by_telegram_id(tg_user.id, tg_user.first_name)
             context.user_data["user_id"] = user["id"]
+            context.user_data["timezone"] = user.get("timezone", "Europe/London")
 
         user_id = context.user_data["user_id"]
-        summary = await db_summaries.get_today_summary(user_id)
+        tz = context.user_data.get("timezone", "Europe/London")
+        today = datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d")
+
+        summary = await db_summaries.get_day_summary(user_id, date=today)
         goals = await db_goals.get_goals(user_id)
 
         text = format_daily_summary(summary, goals)
