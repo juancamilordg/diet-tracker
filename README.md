@@ -23,8 +23,10 @@ A full-stack diet tracking app that uses AI to analyze your meals from photos. L
 - [Deployment](#deployment)
   - [Local Development (Docker Compose)](#local-development-docker-compose)
   - [Production (Railway)](#production-railway)
+- [CI (GitHub Actions)](#ci-github-actions)
 - [Environment Variables](#environment-variables)
 - [Key Design Decisions](#key-design-decisions)
+- [Migration Troubleshooting: SQLite → Supabase](#migration-troubleshooting-sqlite--supabase)
 
 ---
 
@@ -39,13 +41,13 @@ A full-stack diet tracking app that uses AI to analyze your meals from photos. L
                              v
 +-------------+     +-------+--------+     +----------------+
 |   Web App   | --> |  FastAPI Server | --> | Claude AI (API)|
-| (React SPA) |     |                |     | Analyzes meals |
+| (React SPA) |     |   (Railway)    |     | Analyzes meals |
 +-------------+     +-------+--------+     +----------------+
                              |
                     +--------+---------+
-                    |     SQLite DB    |
-                    | (meals, users,   |
-                    |  goals, water)   |
+                    | Supabase (cloud) |
+                    | ├── Postgres DB  |
+                    | └── File Storage |
                     +------------------+
 ```
 
@@ -72,8 +74,8 @@ Single Docker Container
 │   ├── REST API endpoints (/api/*)
 │   └── Static file server (React app)
 ├── Telegram Bot (polling loop)
-├── SQLite Database (file on disk)
-└── Photo Storage (files on disk)
+├── Supabase Postgres (cloud database)
+└── Supabase Storage (cloud file storage)
 ```
 
 **What "monolithic" means:** Instead of having separate servers for the API, the bot, the database, and the frontend, everything runs together in one process. This is simpler to deploy, debug, and reason about. For a household app with 2-3 users, this is the right choice — microservices would add complexity for zero benefit.
@@ -94,8 +96,8 @@ We use polling because it's simpler and works everywhere, even behind firewalls.
 |---|---|---|
 | **Python 3.12** | Programming language | Excellent AI/ML library ecosystem, great for prototyping |
 | **FastAPI** | Web framework (handles HTTP requests) | Async by default, auto-generates API docs, type-safe |
-| **SQLite** | Database (stores all data) | Zero setup, single file, perfect for small apps |
-| **aiosqlite** | Async SQLite wrapper | Lets SQLite work with FastAPI's async architecture |
+| **Supabase (Postgres)** | Cloud database + file storage | Managed Postgres with built-in Storage API, free tier available |
+| **psycopg3** | Async Postgres driver | Native async support, works with Supabase's connection pooler |
 | **python-telegram-bot** | Telegram Bot API wrapper | Most mature Python library for Telegram bots |
 | **Anthropic SDK** | Claude AI client | Official SDK for calling Claude's API |
 | **uvicorn** | ASGI server (runs FastAPI) | Fast, production-ready Python web server |
@@ -117,7 +119,8 @@ We use polling because it's simpler and works everywhere, even behind firewalls.
 |---|---|---|
 | **Docker** | Containerization | "Works on my machine" → works everywhere |
 | **Docker Compose** | Multi-container orchestration | Run backend + frontend locally with one command |
-| **Railway** | Cloud hosting platform | Simple deployment from GitHub, free tier available |
+| **Railway** | Cloud hosting platform | Simple deployment from GitHub, runs the app container |
+| **Supabase** | Database & storage hosting | Managed Postgres + file storage with REST API |
 | **Nginx** | Web server (local only) | Serves frontend + proxies API in local Docker setup |
 
 ### Key Concepts Explained
@@ -173,18 +176,14 @@ Diet Tracker/
 │   │       └── reports.py        # /today summary command
 │   │
 │   ├── db/                       # Database layer
-│   │   ├── connection.py         # Connection management + migrations
-│   │   ├── schema.sql            # Table definitions
+│   │   ├── connection.py         # Postgres connection management (psycopg3)
+│   │   ├── schema.sql            # Table definitions (Postgres syntax)
 │   │   ├── meals.py              # Meal CRUD queries
 │   │   ├── goals.py              # Goals queries
 │   │   ├── water.py              # Water log queries
 │   │   ├── summaries.py          # Aggregation queries (dashboard data)
 │   │   └── users.py              # User queries
 │   │
-│   └── data/                     # Runtime data (not in git)
-│       ├── diet_tracker.db       # SQLite database file
-│       └── photos/               # Uploaded meal photos
-│
 └── frontend/
     ├── Dockerfile                # Frontend-only container (for local dev)
     ├── nginx.conf                # Nginx config (proxies /api to backend)
@@ -282,7 +281,7 @@ Stores who uses the app. When someone messages the Telegram bot for the first ti
 | id | INTEGER (auto) | Unique identifier |
 | telegram_id | INTEGER (unique) | Links to their Telegram account |
 | display_name | TEXT | Shown in the web app user picker |
-| created_at | TEXT | When they first used the app |
+| created_at | TIMESTAMPTZ | When they first used the app |
 
 #### meals
 The core table — every food entry lives here. One row = one meal or snack.
@@ -291,7 +290,7 @@ The core table — every food entry lives here. One row = one meal or snack.
 |---|---|---|
 | id | INTEGER (auto) | Unique identifier |
 | user_id | INTEGER (FK) | Who logged this meal |
-| logged_at | TEXT | When the meal was eaten |
+| logged_at | TIMESTAMPTZ | When the meal was eaten |
 | meal_category | TEXT | breakfast, lunch, dinner, or snack |
 | description | TEXT | "Salmon Poke Bowl with Mango" |
 | calories | REAL | Total kcal (estimated by AI or manual) |
@@ -306,7 +305,7 @@ The core table — every food entry lives here. One row = one meal or snack.
 | ai_raw_response | TEXT | Full Claude API response (for debugging) |
 | notes | TEXT | Optional user notes |
 
-**Why two photo fields?** Telegram stores photos on their servers and gives you a `file_id` to retrieve them later. Web uploads are stored on our server and accessed via a URL. The dashboard checks both fields and displays whichever exists.
+**Why two photo fields?** Telegram stores photos on their servers and gives you a `file_id` to retrieve them later. Web uploads and bot photos are stored on Supabase Storage and accessed via a public URL. The dashboard checks both fields and displays whichever exists.
 
 #### goals
 Each user has one row with their personal nutrition targets. If a user doesn't have goals yet, default values are used and a row is auto-created on first access.
@@ -329,7 +328,7 @@ Simple log of water intake. Each glass/bottle is a separate entry.
 |---|---|---|
 | user_id | INTEGER (FK) | Who drank this |
 | amount_ml | INTEGER | How much (e.g., 250ml) |
-| logged_at | TEXT | When |
+| logged_at | TIMESTAMPTZ | When |
 
 #### How data flows through the database layer
 
@@ -343,17 +342,18 @@ api/routes/dashboard.py          ◄── Receives HTTP request
 db/summaries.py                  ◄── Runs SQL aggregation queries
     │                                  (SUM calories, GROUP BY date, etc.)
     ▼
-db/connection.py → get_db()      ◄── Opens async SQLite connection
+db/connection.py → get_db()      ◄── Opens async Postgres connection (psycopg3)
     │
     ▼
-data/diet_tracker.db             ◄── The actual file on disk
+Supabase Postgres (cloud)        ◄── Managed database via connection pooler
 ```
 
 Every database function follows the same pattern:
-1. Open a connection with `async with get_db() as db:`
-2. Execute a SQL query with `await db.execute(query, params)`
-3. Fetch results with `await cursor.fetchone()` or `fetchall()`
-4. Convert the row to a Python dictionary with `dict(row)`
+1. Open a connection with `async with get_db() as conn:`
+2. Open a cursor with `async with conn.cursor() as cur:`
+3. Execute a SQL query with `await cur.execute(query, (params,))` using `%s` placeholders
+4. Fetch results with `await cur.fetchone()` or `fetchall()`
+5. Serialize datetime values with `_serialize(row)` for JSON responses
 
 ---
 
@@ -691,11 +691,13 @@ docker-compose.yml creates:
 │  │  Port 8000   │  proxy  │  Port 80→3000    │ │
 │  └──────┬───────┘         └─────────────────┘ │
 │         │                                      │
-│    ┌────▼─────┐                                │
-│    │ ./data/  │ ◄── Volume mount (persists     │
-│    │  .db     │      data between restarts)    │
-│    └──────────┘                                │
-└──────────────────────────────────────────────┘
+└─────────┼──────────────────────────────────────┘
+          │
+     ┌────▼──────────────────────┐
+     │  Supabase (cloud)         │
+     │  ├── Postgres DB          │
+     │  └── Storage (photos)     │
+     └───────────────────────────┘
 ```
 
 **How Docker Compose networking works:** When you define services in `docker-compose.yml`, Docker creates a private network where services can reach each other by name. The `web` container's Nginx config can proxy to `http://api:8000` because `api` is a valid hostname inside this network. Your browser connects to `localhost:3000` (the web container), which proxies API calls to the API container.
@@ -729,21 +731,46 @@ In production, the app runs as a **single service** instead of two:
 │  │  └── /* → Serve React static files │  │
 │  └──────────────┬─────────────────────┘  │
 │                 │                         │
-│  ┌──────────────▼──────────────────────┐ │
-│  │  Railway Volume (/app/data)         │ │
-│  │  ├── diet_tracker.db                │ │
-│  │  └── photos/                        │ │
-│  └─────────────────────────────────────┘ │
-└─────────────────────────────────────────┘
+└─────────────────┼─────────────────────────┘
+                  │ (via connection pooler)
+     ┌────────────▼────────────────────┐
+     │  Supabase (cloud)               │
+     │  ├── Postgres DB (port 5432)    │
+     │  └── Storage (meal photos)      │
+     └─────────────────────────────────┘
 ```
 
 **Why combine into one service?** On Railway, each service gets its own URL and there's no shared internal network like Docker Compose provides. Running two services would require the frontend to know the backend's URL and deal with CORS (cross-origin) restrictions. One service avoids all of this.
+
+**No more Railway Volume:** Since the database and photos are now on Supabase, the Railway container is stateless. No volume mount needed — data persists in Supabase even if Railway redeploys or the container restarts.
 
 **The combined Dockerfile** does a multi-stage build:
 1. **Stage 1:** Build the React app with Node.js → outputs static files to `dist/`
 2. **Stage 2:** Copy those static files into the Python container → FastAPI serves them
 
 **What is a multi-stage build?** Docker lets you use multiple `FROM` instructions in one Dockerfile. Each creates a "stage." You can copy files between stages. This means the final image only has Python + the pre-built frontend files — Node.js and all the build tools are thrown away, keeping the image small.
+
+---
+
+## CI (GitHub Actions)
+
+Every push to `main` (and every pull request) automatically runs two checks in parallel via `.github/workflows/ci.yml`. If either fails, the push is flagged as broken.
+
+If you push twice quickly, the first run is cancelled — only the latest commit is checked.
+
+### Frontend check
+
+1. Installs Node.js 20 and runs `npm ci` (exact versions from the lockfile)
+2. Runs `npm run build` — TypeScript type-check + Vite bundle
+
+Fails if there are TypeScript type errors or the build breaks.
+
+### Backend check
+
+1. Installs Python 3.12 and all packages from `requirements.txt`
+2. Runs `ruff check backend/` — a fast Python linter
+
+Fails if there are unused imports, undefined names, or other code issues that ruff catches.
 
 ---
 
@@ -756,12 +783,18 @@ Create a `.env` file in the project root with these values:
 TELEGRAM_BOT_TOKEN=your_bot_token_here    # Get from @BotFather on Telegram
 ANTHROPIC_API_KEY=sk-ant-your_key_here    # Get from console.anthropic.com
 
+# Supabase — required for database and photo storage
+DATABASE_URL=postgresql://postgres.xxx:password@aws-X-region.pooler.supabase.com:5432/postgres
+SUPABASE_URL=https://xxx.supabase.co      # Project URL from Supabase dashboard
+SUPABASE_SERVICE_ROLE_KEY=eyJhbG...        # Service role key (NOT anon key) for Storage uploads
+
 # Optional — have sensible defaults
-DATABASE_PATH=data/diet_tracker.db        # Where SQLite stores data
 API_HOST=0.0.0.0                          # Listen on all interfaces
 API_PORT=8000                             # Or set PORT for Railway
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
+
+**Important:** The `DATABASE_URL` must use the **session pooler** connection string from the Supabase dashboard (not the direct connection). See [Migration Troubleshooting](#migration-troubleshooting-sqlite--supabase) for why.
 
 **How to get a Telegram Bot Token:**
 1. Open Telegram and search for `@BotFather`
@@ -777,20 +810,15 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 
 ## Key Design Decisions
 
-### Why SQLite instead of Postgres?
+### Why Supabase (Postgres) instead of SQLite?
 
-SQLite is a **file-based database** — the entire database is one `.db` file. No separate server process, no connection management, no setup. For a 2-3 user household app, it handles everything perfectly. We'd switch to Postgres when:
-- We need multiple servers writing to the same database
-- We need advanced features like full-text search or JSON operators
-- We need managed backups and replication
+The app originally used SQLite (a file-based database) for simplicity. We migrated to Supabase (managed Postgres) because:
+- **Railway volume reliability:** Railway's persistent volumes occasionally lose data on redeploys. A managed database eliminates this risk
+- **Photo storage:** Local disk photos were lost on container rebuilds. Supabase Storage provides durable, CDN-backed file hosting
+- **Managed backups:** Supabase handles automatic backups, point-in-time recovery, and replication
+- **Better for multi-user:** Postgres handles concurrent connections and transactions more robustly than SQLite
 
-### Why not use Supabase/Firebase from the start?
-
-Keeping the database local (SQLite file) means:
-- Zero external dependencies (works offline, no third-party accounts needed)
-- No latency for database queries (it's reading a local file)
-- Complete data ownership (your data never leaves your server)
-- Simpler debugging (you can open the .db file with any SQLite tool)
+The tradeoff is a small amount of network latency per query and dependency on an external service. For a household app this is acceptable.
 
 ### Why store the AI's raw response?
 
@@ -835,3 +863,90 @@ Nutrition tracking isn't just about eating enough — eating too much of certain
 - **Carbs/fat over target** → may indicate unbalanced diet
 
 The red color and percentage overflow (e.g., "127%") give immediate visual feedback without being preachy about it.
+
+---
+
+## Migration Troubleshooting: SQLite → Supabase
+
+This section documents issues encountered during the migration from SQLite (local file on Railway) to Supabase (managed Postgres + Storage), and how each was resolved. Useful if you're doing a similar migration.
+
+### 1. IPv6 vs IPv4 — Direct connection doesn't work from Railway
+
+**Problem:** Supabase's direct database host (`db.xxx.supabase.co`) resolves to IPv6 only. Railway only supports outbound IPv4 connections, so the app gets "Network is unreachable" errors.
+
+**Solution:** Use the Supabase **session pooler** connection string instead of the direct connection. The pooler (`aws-X-region.pooler.supabase.com`) has IPv4 addresses. Copy the exact session pooler URL from the Supabase dashboard under Project Settings → Database → Connection string → Session mode.
+
+### 2. Pooler hostname is not predictable
+
+**Problem:** The Supabase pooler hostname includes a region-specific prefix (e.g., `aws-1-eu-west-1`) that is project-specific. Using `aws-0` instead of `aws-1` results in connection failures with "Tenant or user not found".
+
+**Solution:** Always copy the connection string directly from the Supabase dashboard. Do not construct it manually or assume the hostname pattern.
+
+### 3. asyncpg doesn't work with Supabase pooler
+
+**Problem:** The `asyncpg` Python driver had persistent "Tenant or user not found" errors when connecting through Supabase's Supavisor connection pooler, even with the correct hostname. This appears to be a protocol-level incompatibility.
+
+**Solution:** Switched from `asyncpg` to `psycopg3` (`psycopg[binary]>=3.2.0`). psycopg3 connected successfully on the first attempt. This required rewriting all SQL from `asyncpg`'s `$1, $2` placeholder syntax to psycopg3's `%s` syntax.
+
+### 4. Connection timeouts with transactional mode
+
+**Problem:** After switching to psycopg3, database queries hung indefinitely on Railway. psycopg3 defaults to transactional mode (wrapping every query in a transaction), which holds connections open on the session pooler and eventually times out.
+
+**Solution:** Set `autocommit=True` on every connection:
+```python
+conn = await psycopg.AsyncConnection.connect(
+    config.DATABASE_URL, autocommit=True, row_factory=dict_row
+)
+```
+This ensures each query executes and releases the connection immediately.
+
+### 5. Connection pool + autocommit incompatibility
+
+**Problem:** psycopg3's `AsyncConnectionPool` didn't properly apply `autocommit=True` via `kwargs`, leading to the same timeout issues as above.
+
+**Solution:** Removed the connection pool entirely. Each database request creates a fresh connection with autocommit. For a household app with 2-3 users, the overhead of creating per-request connections is negligible. The `get_db()` context manager handles connection lifecycle:
+```python
+@asynccontextmanager
+async def get_db():
+    conn = await psycopg.AsyncConnection.connect(
+        config.DATABASE_URL, autocommit=True, row_factory=dict_row
+    )
+    try:
+        yield conn
+    finally:
+        await conn.close()
+```
+
+### 6. Supabase circuit breaker (rate limiting)
+
+**Problem:** After many failed connection attempts during debugging, Supabase's auth layer started returning "Too many authentication errors" and blocking all connections for several minutes.
+
+**Solution:** Made `init_db()` non-fatal — it catches connection errors and logs a warning instead of crashing the app. The app starts even when the circuit breaker is active, and retries on each individual request. The circuit breaker resets after a few minutes of no failed attempts.
+
+### 7. Truncated service role key
+
+**Problem:** Photo uploads to Supabase Storage failed with "Invalid Compact JWS" errors. The `SUPABASE_SERVICE_ROLE_KEY` in the `.env` file was truncated (only 2 of 3 JWT parts, 158 instead of 219 characters).
+
+**Solution:** Copied the full service role key from the Supabase dashboard. A valid JWT has 3 parts separated by dots (header.payload.signature). If your key only has 2 dots, it's truncated.
+
+### 8. SQL dialect differences (SQLite → Postgres)
+
+Key syntax changes that were needed across all `db/*.py` files:
+
+| SQLite | Postgres | Used For |
+|--------|----------|----------|
+| `?` | `%s` | Query parameter placeholders |
+| `date('now')` | `CURRENT_DATE` | Current date |
+| `datetime('now')` | `NOW()` | Current timestamp |
+| `date('now', '-6 days')` | `CURRENT_DATE - INTERVAL '6 days'` | Date arithmetic |
+| `date(logged_at)` | `logged_at::date` | Extract date from timestamp |
+| `INSERT OR IGNORE` | `ON CONFLICT DO NOTHING` | Upsert behavior |
+| `cursor.lastrowid` | `RETURNING *` (in INSERT) | Get inserted row ID |
+| `INTEGER PRIMARY KEY AUTOINCREMENT` | `SERIAL PRIMARY KEY` | Auto-increment IDs |
+| `TEXT` (for dates) | `TIMESTAMPTZ` | Timestamp storage |
+
+### 9. Supabase free tier considerations
+
+- **500MB** database storage, **1GB** file storage
+- **Auto-pause after 7 days of inactivity** — first request after pause takes ~1-2 minutes (cold start). Regular usage (e.g., daily meal logging) prevents this
+- The session pooler (port 5432) is the recommended connection mode for external apps
